@@ -2,3 +2,9 @@
 Library/
 Logs/
 UserSettings/
+Temp/
+obj/
+Build/
+Builds/
+*.csproj
+*.sln
