@@ -1,39 +1,24 @@
 using UnityEngine;
 
-// Smoothly follows the target horizontally and keeps a fixed height. The camera never shows
-// anything left of minX or right of maxX (the edges of the view, not the camera centre).
+// Smoothly follows the target on both axes, with no level bounds.
 public class CameraFollow : MonoBehaviour
 {
     public Transform target;
     public float smoothTime = 0.15f;
 
-    // Height of the camera; the level is horizontal, so it does not follow the target vertically.
-    public float fixedY = -1.5f;
+    // The camera centre sits this far above the target's pivot (the Knight's feet), so more of
+    // what's ahead/above is visible than of the ground underfoot.
+    public float yOffset = 1f;
 
-    [Header("Level bounds (world X, edges of the view)")]
-    public float minX = -9f;
-    public float maxX = 121f;
-
-    Camera cam;
-    float velocityX;
-
-    void Awake()
-    {
-        cam = GetComponent<Camera>();
-    }
+    Vector2 velocity;
 
     void LateUpdate()
     {
         if (target == null) return;
 
-        float halfWidth = cam.orthographicSize * cam.aspect;
-        float lo = minX + halfWidth;
-        float hi = maxX - halfWidth;
-        float wantedX = hi < lo ? (minX + maxX) * 0.5f : Mathf.Clamp(target.position.x, lo, hi);
-
         Vector3 p = transform.position;
-        p.x = Mathf.SmoothDamp(p.x, wantedX, ref velocityX, smoothTime);
-        p.y = fixedY;
+        p.x = Mathf.SmoothDamp(p.x, target.position.x, ref velocity.x, smoothTime);
+        p.y = Mathf.SmoothDamp(p.y, target.position.y + yOffset, ref velocity.y, smoothTime);
         transform.position = p;
     }
 }

@@ -22,10 +22,9 @@ public class KnightMove : MonoBehaviour
     public float runSpeed = 6f;
 
     [Header("Jump")]
-    // Peak height above the take-off point, in world units. Tiers in the level are 2 tilemap
-    // cells apart (1 empty cell for headroom + 1 cell of platform thickness), and landing is
-    // only checked once the Knight starts falling again (see UpdateVertical), so this must
-    // clear a full 2-unit step with some margin.
+    // Peak height above the take-off point, in world units. Landing is only checked once the
+    // Knight starts falling again (see UpdateVertical), so this must clear the tallest step in
+    // the level (2 tilemap cells) with some margin.
     public float jumpHeight = 2.3f;
     // Heavier on the way down than on the way up, so the jump reads as weighty rather than floaty.
     public float riseGravity = 32f;
@@ -43,6 +42,14 @@ public class KnightMove : MonoBehaviour
     // Below this Y the Knight has fallen out of the world and goes back to where it started.
     public float respawnBelowY = -15f;
 
+    [Header("Wall / ceiling detection")]
+    // The Knight's body, in world units from the feet. Walking, knockback and jumps stop at solid
+    // Ground tiles so the Knight can never end up inside them (it would then "stand" on the
+    // tile's inside bottom edge, since the composite collider is outlines only). bodyHeight stays
+    // under 1 so the Knight fits through the level's 1-cell-tall gaps.
+    public float bodyHalfWidth = 0.25f;
+    public float bodyHeight = 0.8f;
+
     [Header("Jump animation timing (seconds into the 'jump' animation)")]
     // The crouch ends and the feet leave the ground.
     public float takeoffTime = 0.2f;
@@ -54,6 +61,12 @@ public class KnightMove : MonoBehaviour
     public float landingLookahead = 0.6f;
 
     const float GroundSkin = 0.1f;
+    // The lowest wall ray sits this far above the feet: clear of the ground being stood on, and
+    // under GroundSkin so a ledge corner caught mid-fall is snapped onto rather than clipped into.
+    const float StepClearance = 0.05f;
+    // Walls stop the body this far short of touching, so vertical rays at the body's edge never
+    // run exactly along a wall face (which reads as a ceiling/ground hit).
+    const float WallSkin = 0.02f;
 
     enum State { Free, Action, Air, Dead }
     enum Locomotion { None, Idle, Walk, Run }
@@ -134,7 +147,7 @@ public class KnightMove : MonoBehaviour
         if (knockbackDistance > 0f)
         {
             Vector3 pos = transform.position;
-            pos.x = Mathf.Clamp(pos.x + knockbackDir * knockbackDistance, minX, maxX);
+            pos.x = Mathf.Clamp(MoveXUntilWall(pos, knockbackDir * knockbackDistance), minX, maxX);
             transform.position = pos;
         }
 
@@ -166,11 +179,27 @@ public class KnightMove : MonoBehaviour
 
         Vector3 pos = transform.position;
         float speed = running ? runSpeed : walkSpeed;
-        pos.x = Mathf.Clamp(pos.x + input * speed * Time.deltaTime, minX, maxX);
+        pos.x = Mathf.Clamp(MoveXUntilWall(pos, input * speed * Time.deltaTime), minX, maxX);
         transform.position = pos;
 
         // Art faces right, so mirror the skeleton when moving left.
         skeletonAnimation.Skeleton.ScaleX = input < 0f ? -1f : 1f;
+    }
+
+    // X after moving dx from pos, stopping short of any wall (a few rays up the body).
+    float MoveXUntilWall(Vector3 pos, float dx)
+    {
+        if (Mathf.Approximately(dx, 0f)) return pos.x;
+
+        float dir = Mathf.Sign(dx);
+        float allowed = Mathf.Abs(dx);
+        for (int i = 0; i < 3; i++)
+        {
+            float y = pos.y + Mathf.Lerp(StepClearance, bodyHeight, i * 0.5f);
+            RaycastHit2D hit = Physics2D.Raycast(new Vector2(pos.x, y), new Vector2(dir, 0f), allowed + bodyHalfWidth + WallSkin, groundLayer);
+            if (hit.collider != null) allowed = Mathf.Max(0f, hit.distance - bodyHalfWidth - WallSkin);
+        }
+        return pos.x + dir * allowed;
     }
 
     // KnightControl restarts the animation on every call, so only call it when the state changes.
@@ -267,6 +296,14 @@ public class KnightMove : MonoBehaviour
         verticalSpeed -= (verticalSpeed > 0f ? riseGravity : fallGravity) * Time.deltaTime;
         float newY = pos.y + verticalSpeed * Time.deltaTime;
 
+        // Bump the head on solid ground above instead of rising into it.
+        float ceilingY;
+        if (verticalSpeed > 0f && TryGetCeiling(pos.x, pos.y + bodyHeight, newY - pos.y, out ceilingY))
+        {
+            newY = ceilingY - bodyHeight;
+            verticalSpeed = 0f;
+        }
+
         float groundY;
         if (verticalSpeed <= 0f && TryGetGround(pos.x, pos.y, pos.y - newY, out groundY))
         {
@@ -321,6 +358,25 @@ public class KnightMove : MonoBehaviour
             if (hit.collider != null && hit.point.y > groundY)
             {
                 groundY = hit.point.y;
+                found = true;
+            }
+        }
+        return found;
+    }
+
+    // Lowest ground surface above the head within `distance`, using a few rays across the head.
+    bool TryGetCeiling(float x, float headY, float distance, out float ceilingY)
+    {
+        bool found = false;
+        ceilingY = float.PositiveInfinity;
+
+        for (int i = -1; i <= 1; i++)
+        {
+            Vector2 origin = new Vector2(x + i * bodyHalfWidth, headY);
+            RaycastHit2D hit = Physics2D.Raycast(origin, Vector2.up, distance, groundLayer);
+            if (hit.collider != null && hit.point.y < ceilingY)
+            {
+                ceilingY = hit.point.y;
                 found = true;
             }
         }
