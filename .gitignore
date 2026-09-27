@@ -8,3 +8,6 @@ Build/
 Builds/
 *.csproj
 *.sln
+
+# Editor screenshots taken during development/debugging - not game content
+Assets/Screenshots/

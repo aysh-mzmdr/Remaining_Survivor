@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using Spine;
 using Spine.Unity;
@@ -21,17 +22,23 @@ public class KnightMove : MonoBehaviour
     public float runSpeed = 6f;
 
     [Header("Jump")]
-    // Peak height above the take-off point, in world units.
-    public float jumpHeight = 0.9f;
+    // Peak height above the take-off point, in world units. Tiers in the level are 2 tilemap
+    // cells apart (1 empty cell for headroom + 1 cell of platform thickness), and landing is
+    // only checked once the Knight starts falling again (see UpdateVertical), so this must
+    // clear a full 2-unit step with some margin.
+    public float jumpHeight = 2.3f;
     // Heavier on the way down than on the way up, so the jump reads as weighty rather than floaty.
     public float riseGravity = 32f;
     public float fallGravity = 48f;
 
     // World X limits so the Knight stays on the ground.
-    public float minX = -8.8f;
-    public float maxX = 9f;
+    public float minX = -11.5f;
+    public float maxX = 11.5f;
 
     [Header("Ground detection")]
+    // Restrict ground raycasts to this layer so they can't hit the Knight's own collider or an
+    // enemy's collider instead of terrain.
+    public LayerMask groundLayer = ~0;
     public float footHalfWidth = 0.25f;
     // Below this Y the Knight has fallen out of the world and goes back to where it started.
     public float respawnBelowY = -15f;
@@ -112,11 +119,42 @@ public class KnightMove : MonoBehaviour
         else if (Input.GetKeyDown(KeyCode.T)) PlayAction(knightControl.stun, true);
     }
 
+    // Raised once whenever an attack action starts, so PlayerCombat can time its hit detection
+    // off the same key presses without duplicating HandleActions' private key-reading logic.
+    public event Action OnAttackStarted;
+
+    public bool IsDead => state == State.Dead;
+
+    // Reuses the existing get-hit reaction; the natural hook for PlayerHealth.TakeDamage.
+    // knockbackDir/knockbackDistance nudge the Knight away from whatever hit it.
+    public bool TakeHit(float knockbackDir = 0f, float knockbackDistance = 0f)
+    {
+        if (state == State.Dead) return false;
+
+        if (knockbackDistance > 0f)
+        {
+            Vector3 pos = transform.position;
+            pos.x = Mathf.Clamp(pos.x + knockbackDir * knockbackDistance, minX, maxX);
+            transform.position = pos;
+        }
+
+        PlayAction(knightControl.getHit, true);
+        return true;
+    }
+
+    // Reuses the existing death reaction (identical to the manual X-key path in HandleInterrupts).
+    public void Die()
+    {
+        if (state == State.Dead) return;
+        PlayAction(knightControl.death, false);
+        state = State.Dead;
+    }
+
     void HandleActions()
     {
         if (Input.GetKeyDown(KeyCode.Space)) StartJump();
-        else if (Input.GetKeyDown(KeyCode.J)) PlayAction(knightControl.attack_1, true);
-        else if (Input.GetKeyDown(KeyCode.K)) PlayAction(knightControl.attack_2, true);
+        else if (Input.GetKeyDown(KeyCode.J)) { OnAttackStarted?.Invoke(); PlayAction(knightControl.attack_1, true); }
+        else if (Input.GetKeyDown(KeyCode.K)) { OnAttackStarted?.Invoke(); PlayAction(knightControl.attack_2, true); }
         else if (Input.GetKeyDown(KeyCode.Alpha1)) PlayAction(knightControl.skill_1, true);
         else if (Input.GetKeyDown(KeyCode.Alpha2)) PlayAction(knightControl.skill_2, true);
         else if (Input.GetKeyDown(KeyCode.Alpha3)) PlayAction(knightControl.skill_3, true);
@@ -279,7 +317,7 @@ public class KnightMove : MonoBehaviour
         for (int i = -1; i <= 1; i++)
         {
             Vector2 origin = new Vector2(x + i * footHalfWidth, feetY + GroundSkin);
-            RaycastHit2D hit = Physics2D.Raycast(origin, Vector2.down, GroundSkin + distance);
+            RaycastHit2D hit = Physics2D.Raycast(origin, Vector2.down, GroundSkin + distance, groundLayer);
             if (hit.collider != null && hit.point.y > groundY)
             {
                 groundY = hit.point.y;
